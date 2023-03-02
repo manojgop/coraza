@@ -447,9 +447,9 @@ actionLoop:
 				// skip unquoted whitespaces
 				continue actionLoop
 			}
-			cval.WriteString(string(c))
+			cval.WriteRune(c)
 		case iskey:
-			ckey.WriteString(string(c))
+			ckey.WriteRune(c)
 		}
 		if i+1 == len(actions) {
 			f, err := actionsmod.Get(ckey.String())

@@ -18,6 +18,7 @@ import (
 
 	"github.com/corazawaf/coraza/v3/bodyprocessors"
 	"github.com/corazawaf/coraza/v3/collection"
+	"github.com/corazawaf/coraza/v3/debuglogger"
 	"github.com/corazawaf/coraza/v3/internal/collections"
 	"github.com/corazawaf/coraza/v3/internal/corazarules"
 	corazatypes "github.com/corazawaf/coraza/v3/internal/corazatypes"
@@ -282,7 +283,7 @@ func (tx *Transaction) Interrupt(interruption *types.Interruption) {
 	}
 }
 
-func (tx *Transaction) DebugLogger() loggers.DebugLogger {
+func (tx *Transaction) DebugLogger() debuglogger.Logger {
 	return tx.WAF.Logger
 }
 
@@ -350,7 +351,11 @@ func (tx *Transaction) Capturing() bool {
 // that supports capture, like @rx
 func (tx *Transaction) CaptureField(index int, value string) {
 	if tx.Capture {
-		tx.WAF.Logger.Debug("[%s] Capturing field %d with value %q", tx.id, index, value)
+		tx.WAF.Logger.Debug().
+			Str("tx_id", tx.id).
+			Int("field", index).
+			Str("value", value).
+			Msg("Capturing field")
 		i := strconv.Itoa(index)
 		tx.variables.tx.SetIndex(i, 0, value)
 	}
@@ -358,7 +363,9 @@ func (tx *Transaction) CaptureField(index int, value string) {
 
 // this function is used to control which variables are reset after a new rule is evaluated
 func (tx *Transaction) resetCaptures() {
-	tx.WAF.Logger.Debug("[%s] Reseting captured variables", tx.id)
+	tx.WAF.Logger.Debug().
+		Str("tx_id", tx.id).
+		Msg("Reseting captured variables")
 	// We reset capture 0-9
 	ctx := tx.variables.tx
 	// RUNE 48 = 0
@@ -455,7 +462,7 @@ func (tx *Transaction) matchVariable(match *corazarules.MatchData) {
 
 // MatchRule Matches a rule to be logged
 func (tx *Transaction) MatchRule(r *Rule, mds []types.MatchData) {
-	tx.WAF.Logger.GetLogger().Debug().Str("tx", tx.id).Int("Rule", r.ID_).Msg("Rule Matched")
+	tx.WAF.Logger.Debug().Str("tx_id", tx.id).Int("rule_id", r.ID_).Msg("Rule Matched")
 	// tx.MatchedRules = append(tx.MatchedRules, mr)
 
 	// If the rule is set to audit, we log the transaction to the audit log
@@ -709,7 +716,7 @@ func (tx *Transaction) ProcessURI(uri string, method string, httpVersion string)
 // It is expected to be executed before calling ProcessRequestHeaders.
 func (tx *Transaction) SetServerName(serverName string) {
 	if tx.LastPhase >= types.PhaseRequestHeaders {
-		tx.WAF.Logger.Warn("SetServerName has been called after ProcessRequestHeaders")
+		tx.WAF.Logger.Warn().Msg("SetServerName has been called after ProcessRequestHeaders")
 	}
 	tx.variables.serverName.Set(serverName)
 }
@@ -727,12 +734,12 @@ func (tx *Transaction) ProcessRequestHeaders() *types.Interruption {
 	}
 	if tx.LastPhase >= types.PhaseRequestHeaders {
 		// Phase already evaluated
-		tx.WAF.Logger.Error("ProcessRequestHeaders has already been called")
+		tx.WAF.Logger.Error().Msg("ProcessRequestHeaders has already been called")
 		return tx.interruption
 	}
 
 	if tx.interruption != nil {
-		tx.WAF.Logger.Error("Calling ProcessRequestHeaders but there is a preexisting interruption")
+		tx.WAF.Logger.Error().Msg("Calling ProcessRequestHeaders but there is a preexisting interruption")
 		return tx.interruption
 	}
 
@@ -741,7 +748,7 @@ func (tx *Transaction) ProcessRequestHeaders() *types.Interruption {
 }
 
 func setAndReturnBodyLimitInterruption(tx *Transaction) (*types.Interruption, int, error) {
-	tx.DebugLogger().Warn("Disrupting transaction with body size above the configured limit (Action Reject)")
+	tx.WAF.Logger.Warn().Msg("Disrupting transaction with body size above the configured limit (Action Reject)")
 	tx.interruption = &types.Interruption{
 		Status: 413,
 		Action: "deny",
@@ -803,7 +810,7 @@ func (tx *Transaction) WriteRequestBody(b []byte) (*types.Interruption, int, err
 	}
 
 	if runProcessRequestBody {
-		tx.DebugLogger().Warn("Processing request body whose size reached the configured limit (Action ProcessPartial)")
+		tx.WAF.Logger.Warn().Msg("Processing request body whose size reached the configured limit (Action ProcessPartial)")
 		_, err = tx.ProcessRequestBody()
 	}
 	return tx.interruption, int(w), err
@@ -848,7 +855,7 @@ func (tx *Transaction) ReadRequestBodyFrom(r io.Reader) (*types.Interruption, in
 		if tx.requestBodyBuffer.length >= (math.MaxInt64 - writingBytes) {
 			// Overflow, failing. MaxInt64 is not a realistic payload size. Furthermore, it has been tested that
 			// bytes.Buffer does not work with this kind of sizes. See comments in BodyBuffer Write(data []byte)
-			return nil, 0, errors.New("Overflow reached while writing request body")
+			return nil, 0, errors.New("overflow reached while writing request body")
 		}
 		if tx.requestBodyBuffer.length+writingBytes >= tx.RequestBodyLimit {
 			tx.variables.inboundErrorData.Set("1")
@@ -882,7 +889,7 @@ func (tx *Transaction) ReadRequestBodyFrom(r io.Reader) (*types.Interruption, in
 
 	err = nil
 	if runProcessRequestBody {
-		tx.DebugLogger().Warn("Processing request body whose size reached the configured limit (Action ProcessPartial)")
+		tx.WAF.Logger.Warn().Msg("Processing request body whose size reached the configured limit (Action ProcessPartial)")
 		_, err = tx.ProcessRequestBody()
 	}
 	return tx.interruption, int(w), err
@@ -902,12 +909,12 @@ func (tx *Transaction) ProcessRequestBody() (*types.Interruption, error) {
 
 	if tx.LastPhase >= types.PhaseRequestBody {
 		// Phase already evaluated
-		tx.WAF.Logger.Warn("ProcessRequestBody has already been called")
+		tx.WAF.Logger.Warn().Msg("ProcessRequestBody has already been called")
 		return tx.interruption, nil
 	}
 
 	if tx.interruption != nil {
-		tx.WAF.Logger.Error("Calling ProcessRequestBody but there is a preexisting interruption")
+		tx.WAF.Logger.Error().Msg("Calling ProcessRequestBody but there is a preexisting interruption")
 		return tx.interruption, nil
 	}
 
@@ -935,7 +942,10 @@ func (tx *Transaction) ProcessRequestBody() (*types.Interruption, error) {
 		rbp = "URLENCODED"
 		tx.variables.reqbodyProcessor.Set(rbp)
 	}
-	tx.WAF.Logger.Debug("[%s] Attempting to process request body using %q", tx.id, rbp)
+	tx.WAF.Logger.Debug().
+		Str("tx_id", tx.id).
+		Str("body_processor", rbp).
+		Msg("Attempting to process request body using")
 	rbp = strings.ToLower(rbp)
 	if rbp == "" {
 		// so there is no bodyprocessor, we don't want to generate an error
@@ -974,12 +984,12 @@ func (tx *Transaction) ProcessResponseHeaders(code int, proto string) *types.Int
 
 	if tx.LastPhase >= types.PhaseResponseHeaders {
 		// Phase already evaluated
-		tx.WAF.Logger.Error("ProcessResponseHeaders has already been called")
+		tx.WAF.Logger.Error().Msg("ProcessResponseHeaders has already been called")
 		return tx.interruption
 	}
 
 	if tx.interruption != nil {
-		tx.WAF.Logger.Error("Calling ProcessResponseHeaders but there is a preexisting interruption")
+		tx.WAF.Logger.Error().Msg("Calling ProcessResponseHeaders but there is a preexisting interruption")
 		return tx.interruption
 	}
 
@@ -1134,21 +1144,26 @@ func (tx *Transaction) ProcessResponseBody() (*types.Interruption, error) {
 
 	if tx.LastPhase >= types.PhaseResponseBody {
 		// Phase already evaluated
-		tx.WAF.Logger.Warn("ProcessResponseBody has already been called")
+		tx.WAF.Logger.Warn().Msg("ProcessResponseBody has already been called")
 		return tx.interruption, nil
 	}
 
 	if tx.interruption != nil {
-		tx.WAF.Logger.Error("Calling ProcessResponseBody but there is a preexisting interruption")
+		tx.WAF.Logger.Error().Msg("Calling ProcessResponseBody but there is a preexisting interruption")
 		return tx.interruption, nil
 	}
 
 	if !tx.ResponseBodyAccess || !tx.IsResponseBodyProcessable() {
-		tx.WAF.Logger.Debug("[%s] Skipping response body processing (Access: %t)", tx.id, tx.ResponseBodyAccess)
+		tx.WAF.Logger.Debug().
+			Str("tx_id", tx.id).
+			Bool("response_body_access", tx.ResponseBodyAccess).
+			Msg("Skipping response body processing")
 		tx.WAF.Rules.Eval(types.PhaseResponseBody, tx)
 		return tx.interruption, nil
 	}
-	tx.WAF.Logger.Debug("[%s] Attempting to process response body", tx.id)
+	tx.WAF.Logger.Debug().
+		Str("tx_id", tx.id).
+		Msg("Attempting to process response body")
 	reader, err := tx.responseBodyBuffer.Reader()
 	if err != nil {
 		return tx.interruption, err
@@ -1180,13 +1195,17 @@ func (tx *Transaction) ProcessLogging() {
 
 	if tx.AuditEngine == types.AuditEngineOff {
 		// Audit engine disabled
-		tx.WAF.Logger.Debug("[%s] Transaction not marked for audit logging, AuditEngine is disabled", tx.id)
+		tx.WAF.Logger.Debug().
+			Str("tx_id", tx.id).
+			Msg("Transaction not marked for audit logging, AuditEngine is disabled")
 		return
 	}
 
 	if tx.AuditEngine == types.AuditEngineRelevantOnly && !tx.audit {
 		// Transaction marked not for audit logging
-		tx.WAF.Logger.Debug("[%s] Transaction not marked for audit logging, AuditEngine is RelevantOnly and we got noauditlog", tx.id)
+		tx.WAF.Logger.Debug().
+			Str("tx_id", tx.id).
+			Msg("Transaction not marked for audit logging, AuditEngine is RelevantOnly and we got noauditlog")
 		return
 	}
 
@@ -1195,16 +1214,23 @@ func (tx *Transaction) ProcessLogging() {
 		status := tx.variables.responseStatus.Get()
 		if re != nil && !re.Match([]byte(status)) {
 			// Not relevant status
-			tx.WAF.Logger.Debug("[%s] Transaction status not marked for audit logging", tx.id)
+			tx.WAF.Logger.Debug().
+				Str("tx_id", tx.id).
+				Msg("Transaction status not marked for audit logging")
 			return
 		}
 	}
 
-	tx.WAF.Logger.Debug("[%s] Transaction marked for audit logging", tx.id)
+	tx.WAF.Logger.Debug().
+		Str("tx_id", tx.id).
+		Msg("Transaction marked for audit logging")
+
 	if writer := tx.WAF.AuditLogWriter; writer != nil {
 		// We don't log if there is an empty audit logger
 		if err := writer.Write(tx.AuditLog()); err != nil {
-			tx.WAF.Logger.Error(err.Error())
+			tx.WAF.Logger.Error().
+				Err(err).
+				Msg("Failed to write audit log")
 		}
 	}
 }
@@ -1352,7 +1378,10 @@ func (tx *Transaction) Close() error {
 		errs = append(errs, err)
 	}
 
-	tx.WAF.Logger.Debug("[%s] Transaction finished, disrupted: %t", tx.id, tx.IsInterrupted())
+	tx.WAF.Logger.Debug().
+		Str("tx_id", tx.id).
+		Bool("is_interrupted", tx.IsInterrupted()).
+		Msg("Transaction finished")
 
 	switch {
 	case len(errs) == 0:
