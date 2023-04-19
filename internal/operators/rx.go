@@ -14,10 +14,13 @@ import (
 	"rsc.io/binaryregexp"
 
 	"github.com/corazawaf/coraza/v3/experimental/plugins/plugintypes"
+	//hs "github.com/flier/gohs/hyperscan"
+	hs "github.com/flier/gohs/chimera"
 )
 
 type rx struct {
-	re *regexp.Regexp
+	re   *regexp.Regexp
+	hsdb hs.BlockDatabase
 }
 
 var _ plugintypes.Operator = (*rx)(nil)
@@ -39,7 +42,15 @@ func newRX(options plugintypes.OperatorOptions) (plugintypes.Operator, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &rx{re: re}, nil
+
+	pattern := hs.NewPattern(options.Arguments, hs.DotAll|hs.MultiLine)
+	database, err := hs.NewBlockDatabase(pattern)
+	if err != nil {
+		fmt.Println("Hyperscan database build error for pattern = ", options.Arguments, " Error: ", err)
+		return nil, err
+	}
+
+	return &rx{re: re, hsdb: database}, nil
 }
 
 func (o *rx) Evaluate(tx plugintypes.TransactionState, value string) bool {
@@ -57,7 +68,8 @@ func (o *rx) Evaluate(tx plugintypes.TransactionState, value string) bool {
 		}
 		return true
 	} else {
-		return o.re.MatchString(value)
+		//return o.re.MatchString(value)
+		return o.hsdb.MatchString(value)
 	}
 }
 
